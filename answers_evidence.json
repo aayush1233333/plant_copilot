@@ -1,0 +1,647 @@
+{
+  "q1": {
+    "status": "ok",
+    "value": 6,
+    "display": "6 stops of 30+ minutes (Data Issue corrected); raw system state: 7",
+    "metric": "q1_long_stops_plant_day",
+    "sql": "SELECT minute_start, planned, running, pieces FROM machine_minutes WHERE company_id = :tenant AND machine_id = :machine AND minute_start >= :start AND minute_start < :end ORDER BY minute_start, id;\nSELECT DISTINCT reason_date || ' ' || hour_start AS hour_ts, reason, minutes, remark, entered_by, created_at FROM stop_reasons WHERE company_id = :tenant AND machine_id = :machine AND deleted_at = '0000-00-00 00:00:00' AND reason_date || ' ' || hour_start >= :start AND reason_date || ' ' || hour_start < :end",
+    "logic": "classify minutes -> runs of STOPPED_PLANNED -> keep runs >= 30 -> apply D4 rule (UNCHANGED/ELIMINATED/AMBIGUOUS)",
+    "params": {
+      "machine": "Press 2",
+      "plant_day": "2026-11-03",
+      "min_stop_minutes": 30
+    },
+    "rows_used": 1463,
+    "as_of": "2026-11-07 14:36:00",
+    "coverage": {
+      "expected": 1440,
+      "observed": 1436,
+      "missing_ranges": [
+        "2026-11-03 10:47:00..2026-11-03 10:47:00",
+        "2026-11-03 21:11:00..2026-11-03 21:11:00",
+        "2026-11-03 21:49:00..2026-11-03 21:49:00",
+        "2026-11-03 23:56:00..2026-11-03 23:56:00"
+      ]
+    },
+    "caveats": [
+      "Plant day = 08:00 to 08:00 next morning. A stop crossing 20:00 or midnight counts once.",
+      "A stop is a run of consecutive planned minutes with running = 0. A missing minute (no data) ends a run.",
+      "Data Issue correction uses live, de-duplicated operator entries. Entries give minutes per hour, not which minutes, so a stop is only removed when the entries provably leave it shorter than 30 minutes.",
+      "Calendar-day reading of the question would give a different count (owner question).",
+      "Data Issue entries used: 2, last created at 2026-11-04 11:44:24. The answer is valid as of the snapshot only."
+    ],
+    "sensitivity": [
+      {
+        "name": "raw_system_state",
+        "value": 7,
+        "note": "Data Issue not applied"
+      },
+      {
+        "name": "raw_with_unknown_as_stopped",
+        "value": 7,
+        "note": "raw count (Data Issue NOT applied) if every missing minute were a planned stop"
+      },
+      {
+        "name": "corrected_range",
+        "value": [
+          6,
+          6
+        ],
+        "note": "unchanged .. unchanged + ambiguous"
+      }
+    ],
+    "needed_data": "",
+    "details": [
+      {
+        "start": "2026-11-03 09:40:00",
+        "last_minute": "2026-11-03 10:46:00",
+        "minutes": 67,
+        "before": "RUNNING",
+        "after": "UNKNOWN",
+        "verdict": "UNCHANGED"
+      },
+      {
+        "start": "2026-11-03 14:10:00",
+        "last_minute": "2026-11-03 14:51:00",
+        "minutes": 42,
+        "before": "RUNNING",
+        "after": "RUNNING",
+        "verdict": "UNCHANGED"
+      },
+      {
+        "start": "2026-11-03 14:59:00",
+        "last_minute": "2026-11-03 15:31:00",
+        "minutes": 33,
+        "before": "RUNNING",
+        "after": "RUNNING",
+        "verdict": "UNCHANGED"
+      },
+      {
+        "start": "2026-11-03 17:00:00",
+        "last_minute": "2026-11-03 17:44:00",
+        "minutes": 45,
+        "before": "RUNNING",
+        "after": "RUNNING",
+        "verdict": "UNCHANGED"
+      },
+      {
+        "start": "2026-11-04 01:08:00",
+        "last_minute": "2026-11-04 02:49:00",
+        "minutes": 102,
+        "before": "RUNNING",
+        "after": "RUNNING",
+        "verdict": "ELIMINATED"
+      },
+      {
+        "start": "2026-11-04 04:02:00",
+        "last_minute": "2026-11-04 04:35:00",
+        "minutes": 34,
+        "before": "RUNNING",
+        "after": "RUNNING",
+        "verdict": "UNCHANGED"
+      },
+      {
+        "start": "2026-11-04 06:35:00",
+        "last_minute": "2026-11-04 07:09:00",
+        "minutes": 35,
+        "before": "RUNNING",
+        "after": "RUNNING",
+        "verdict": "UNCHANGED"
+      }
+    ],
+    "result_hash": "1be15fdffde55bfa4029f48b6632a985f833b1b7340d760242f467f62dc9a0ca"
+  },
+  "q2": {
+    "status": "ok",
+    "value": 299,
+    "display": "299 planned minutes stopped in shift A (1 minute with no data)",
+    "metric": "q2_planned_standstill_minutes_shift",
+    "sql": "SELECT minute_start, planned, running, pieces FROM machine_minutes WHERE company_id = :tenant AND machine_id = :machine AND minute_start >= :start AND minute_start < :end ORDER BY minute_start, id;\nSELECT DISTINCT reason_date || ' ' || hour_start AS hour_ts, reason, minutes, remark, entered_by, created_at FROM stop_reasons WHERE company_id = :tenant AND machine_id = :machine AND deleted_at = '0000-00-00 00:00:00' AND reason_date || ' ' || hour_start >= :start AND reason_date || ' ' || hour_start < :end",
+    "logic": "classify minutes -> count STOPPED_PLANNED inside the shift window -> subtract operator-entered Data Issue minutes per hour",
+    "params": {
+      "machine": "Press 2",
+      "plant_day": "2026-11-03",
+      "shift": "A"
+    },
+    "rows_used": 719,
+    "as_of": "2026-11-07 14:36:00",
+    "coverage": {
+      "expected": 720,
+      "observed": 719,
+      "missing_ranges": [
+        "2026-11-03 10:47:00..2026-11-03 10:47:00"
+      ]
+    },
+    "caveats": [
+      "Counts minutes with planned = 1 and running = 0 inside the shift window (08:00-20:00 for A, 20:00-08:00 for B).",
+      "Minutes with no data are not counted as stopped.",
+      "1 minute(s) in this shift had no data; the true count may be higher by up to that many."
+    ],
+    "sensitivity": [
+      {
+        "name": "raw_system_state",
+        "value": 299,
+        "note": "Data Issue not applied"
+      },
+      {
+        "name": "unknown_minutes_counted_as_stopped",
+        "value": 300,
+        "note": "upper bound"
+      }
+    ],
+    "needed_data": "",
+    "details": [],
+    "result_hash": "1bff746030ef38de95a0d68f8d9d74612d4c82b3b9c67e3cc6ea2fdd9b5f8ce6"
+  },
+  "q3": {
+    "status": "ok",
+    "value": 229.3,
+    "display": "229.3 kWh used by Press 2's meter in Shift A",
+    "metric": "energy_kwh_shift",
+    "sql": "SELECT h.id, h.meter_id, h.report_date, h.shift, h.start_time, h.end_time, h.kwh, h.counter_start, h.counter_end, h.pf FROM energy_hourly h JOIN energy_meters m ON h.meter_id = m.meter_id WHERE m.company_id = :tenant AND m.machine_id = :machine AND h.start_time >= :start AND h.start_time < :end ORDER BY h.start_time, h.id",
+    "logic": "verify register continuity across shift slots and adjacent boundary readings -> reconcile total register delta",
+    "params": {
+      "machine": "Press 2",
+      "day": "2026-11-04",
+      "shift": "A"
+    },
+    "rows_used": 11,
+    "as_of": "2026-11-07 14:36:00",
+    "coverage": {
+      "expected": 12,
+      "observed": 11,
+      "missing_ranges": [
+        "2026-11-04 12:30:01..2026-11-04 13:30:00"
+      ]
+    },
+    "caveats": [
+      "Energy shift window corresponds to platform energy slot labels (07:30:01-19:30:00 for Shift A).",
+      "Energy is calculated from physical meter registers (counter_start/counter_end); kwh column is ~2.5% below register delta (unexplained platform bias).",
+      "Bridged missing slot (1h) between 2026-11-04 12:30:00 and 2026-11-04 13:30:01 (register jump 17.82 kWh <= physical threshold)."
+    ],
+    "sensitivity": [
+      {
+        "name": "observed_rows_kwh_sum",
+        "value": 206.17,
+        "note": "sum of kwh column for observed slots only (biased low by ~2.5% and missing slots omitted)"
+      },
+      {
+        "name": "observed_slots_count",
+        "value": 11,
+        "note": "number of 1-hour slots observed out of 12 expected"
+      },
+      {
+        "name": "strict_unbridged_alternative",
+        "value": "incomplete",
+        "note": "result if any missing slot inside or at the boundary of Shift A is treated as incomplete"
+      }
+    ],
+    "needed_data": "",
+    "details": [],
+    "result_hash": "07c6805c94c894777afee481302697ea9ee662a2cee84af0dc3f5ee4c0f8022f"
+  },
+  "q4": {
+    "status": "ok",
+    "value": 140.7,
+    "display": "140.7 kWh used by Press 3's meter in Shift A",
+    "metric": "energy_kwh_shift",
+    "sql": "SELECT h.id, h.meter_id, h.report_date, h.shift, h.start_time, h.end_time, h.kwh, h.counter_start, h.counter_end, h.pf FROM energy_hourly h JOIN energy_meters m ON h.meter_id = m.meter_id WHERE m.company_id = :tenant AND m.machine_id = :machine AND h.start_time >= :start AND h.start_time < :end ORDER BY h.start_time, h.id",
+    "logic": "verify register continuity across shift slots and adjacent boundary readings -> reconcile total register delta",
+    "params": {
+      "machine": "Press 3",
+      "day": "2026-11-05",
+      "shift": "A"
+    },
+    "rows_used": 11,
+    "as_of": "2026-11-07 14:36:00",
+    "coverage": {
+      "expected": 12,
+      "observed": 11,
+      "missing_ranges": [
+        "2026-11-05 07:30:01..2026-11-05 08:30:00"
+      ]
+    },
+    "caveats": [
+      "Energy shift window corresponds to platform energy slot labels (07:30:01-19:30:00 for Shift A).",
+      "Energy is calculated from physical meter registers (counter_start/counter_end); kwh column is ~2.5% below register delta (unexplained platform bias).",
+      "Shift start slot was missing; register boundary was proven continuous from preceding slot ending at 2026-11-05 07:30:00.",
+      "Bridged missing slot (1h) between 2026-11-05 07:30:00 and 2026-11-05 08:30:01 (register jump 13.27 kWh <= physical threshold)."
+    ],
+    "sensitivity": [
+      {
+        "name": "observed_rows_kwh_sum",
+        "value": 124.27,
+        "note": "sum of kwh column for observed slots only (biased low by ~2.5% and missing slots omitted)"
+      },
+      {
+        "name": "observed_slots_count",
+        "value": 11,
+        "note": "number of 1-hour slots observed out of 12 expected"
+      },
+      {
+        "name": "strict_unbridged_alternative",
+        "value": "incomplete",
+        "note": "result if any missing slot inside or at the boundary of Shift A is treated as incomplete"
+      }
+    ],
+    "needed_data": "",
+    "details": [],
+    "result_hash": "7fa65076d8720df1dce6a0036c416cb582b85b22c1a2ab9193d0e616b853c67e"
+  },
+  "q5": {
+    "status": "ok",
+    "value": 54123,
+    "display": "54123 pieces counted by 8 machines (lower bound: 23 machine-minutes had no data)",
+    "metric": "q5_total_pieces_plant_day",
+    "sql": "SELECT minute_start, planned, running, pieces FROM machine_minutes WHERE company_id = :tenant AND machine_id = :machine AND minute_start >= :start AND minute_start < :end ORDER BY minute_start, id  -- run once per machine of the tenant; pieces are summed in Python after collapsing exact duplicate rows",
+    "logic": "for each machine of the tenant: collapse exact duplicate minute rows, sum pieces over the plant-day window, add up machines",
+    "params": {
+      "plant_day": "2026-10-31",
+      "scope": "all machines of the tenant"
+    },
+    "rows_used": 11497,
+    "as_of": "2026-11-07 14:36:00",
+    "coverage": {
+      "expected": 11520,
+      "observed": 11497,
+      "missing_ranges": [
+        "Press 1: 2026-10-31 15:11:00",
+        "Press 1: 2026-10-31 17:44:00",
+        "Press 1: 2026-11-01 07:27:00",
+        "Press 2: 2026-10-31 12:42:00",
+        "Press 3: 2026-10-31 12:37:00",
+        "Press 3: 2026-10-31 14:32:00",
+        "Press 3: 2026-11-01 05:02:00",
+        "Press 4: 2026-10-31 09:24:00",
+        "Press 4: 2026-10-31 10:20:00",
+        "Press 4: 2026-10-31 13:03:00",
+        "Press 4: 2026-10-31 20:03:00",
+        "Press 4: 2026-10-31 21:07:00",
+        "Press 4: 2026-10-31 23:18:00",
+        "Press 4: 2026-11-01 04:37:00",
+        "Press 4: 2026-11-01 04:52:00",
+        "Bender 1: 2026-10-31 09:46:00",
+        "Bender 1: 2026-10-31 19:04:00",
+        "Bender 2: 2026-10-31 10:43:00",
+        "Bender 2: 2026-10-31 23:09:00",
+        "Moulder 1: 2026-11-01 05:06:00",
+        "Moulder 2: 2026-10-31 13:38:00",
+        "Moulder 2: 2026-10-31 20:07:00",
+        "Moulder 2: 2026-11-01 05:21:00"
+      ]
+    },
+    "caveats": [
+      "Plant day = 08:00 to 08:00 next morning.",
+      "Sums the per-minute pieces column as recorded (profiling showed it is a per-minute count, 0 when a machine is not running).",
+      "These are pieces counted by the machines, not good pieces: rejections are a separate table and are not subtracted.",
+      "23 machine-minute(s) had no usable data; their pieces are unknown, so the true total may be higher. Missing minutes are never treated as zero.",
+      "Machines with 0 recorded pieces in this window: Bender 1."
+    ],
+    "sensitivity": [
+      {
+        "name": "upper_bound_if_missing_minutes_ran_at_peak",
+        "value": 54372,
+        "note": "each missing minute assumed to produce that machine's highest per-minute count in the window"
+      }
+    ],
+    "needed_data": "",
+    "details": [
+      {
+        "machine": "Press 1",
+        "pieces": 8612,
+        "missing_minutes": 3,
+        "max_pieces_in_a_minute": 14
+      },
+      {
+        "machine": "Press 2",
+        "pieces": 7446,
+        "missing_minutes": 1,
+        "max_pieces_in_a_minute": 11
+      },
+      {
+        "machine": "Press 3",
+        "pieces": 3930,
+        "missing_minutes": 3,
+        "max_pieces_in_a_minute": 12
+      },
+      {
+        "machine": "Press 4",
+        "pieces": 5694,
+        "missing_minutes": 8,
+        "max_pieces_in_a_minute": 9
+      },
+      {
+        "machine": "Bender 1",
+        "pieces": 0,
+        "missing_minutes": 2,
+        "max_pieces_in_a_minute": 0
+      },
+      {
+        "machine": "Bender 2",
+        "pieces": 26157,
+        "missing_minutes": 2,
+        "max_pieces_in_a_minute": 38
+      },
+      {
+        "machine": "Moulder 1",
+        "pieces": 1484,
+        "missing_minutes": 1,
+        "max_pieces_in_a_minute": 3
+      },
+      {
+        "machine": "Moulder 2",
+        "pieces": 800,
+        "missing_minutes": 3,
+        "max_pieces_in_a_minute": 3
+      }
+    ],
+    "result_hash": "4ce1f55e339c495414afcc385da17f1f39bfa081942df063b787084f4e38c029"
+  },
+  "q6": {
+    "status": "ok",
+    "value": "Breakdown",
+    "display": "Breakdown (1869 real lost minutes entered by operators)",
+    "metric": "q6_top_stop_reason_real_lost_time",
+    "sql": "WITH live AS (  SELECT DISTINCT company_id, machine_id, reason_date, hour_start, reason, minutes,                   COALESCE(remark, '') AS remark, COALESCE(entered_by, '') AS entered_by, created_at  FROM stop_reasons   WHERE company_id = ? AND deleted_at = ? AND reason_date >= ? AND reason_date <= ?) SELECT reason, COUNT(*) AS n_entries, SUM(minutes) AS total_minutes FROM live GROUP BY reason ORDER BY total_minutes DESC",
+    "logic": "collapse exact live duplicate rows -> exclude Data Issue (machine was actually running) -> rank remaining stop reasons by sum(minutes)",
+    "params": {
+      "start_date": "2026-11-01",
+      "end_date": "2026-11-07",
+      "tenant": "Kalpa Appliances"
+    },
+    "rows_used": 733,
+    "as_of": "2026-11-07 14:36:00",
+    "coverage": {
+      "expected": 0,
+      "observed": 0,
+      "missing_ranges": []
+    },
+    "caveats": [
+      "Live entries only (deleted_at = '0000-00-00 00:00:00'); exact duplicate rows collapsed to one.",
+      "'Data Issue' entries indicate the machine was actually running (false system stop) and are excluded from real lost time.",
+      "Filtered by operator-entered reason_date (calendar date).",
+      "Data Issue accounted for 3974 entered minutes across 103 entries (excluded)."
+    ],
+    "sensitivity": [
+      {
+        "name": "top_reason_raw_including_data_issue",
+        "value": "Data Issue",
+        "minutes": 3974
+      },
+      {
+        "name": "real_reasons_ranking",
+        "value": [
+          {
+            "reason": "Breakdown",
+            "minutes": 1869
+          },
+          {
+            "reason": "Die Cleaning",
+            "minutes": 1551
+          },
+          {
+            "reason": "Material Waiting",
+            "minutes": 1048
+          },
+          {
+            "reason": "Tool Change",
+            "minutes": 905
+          },
+          {
+            "reason": "Oil Filling",
+            "minutes": 620
+          },
+          {
+            "reason": "Quality Check",
+            "minutes": 484
+          },
+          {
+            "reason": "Operator Not Available",
+            "minutes": 338
+          },
+          {
+            "reason": "Power Cut",
+            "minutes": 52
+          }
+        ]
+      }
+    ],
+    "needed_data": "",
+    "details": [],
+    "result_hash": "d75376ce0de72d6528b7663bf046ac05aade5a8dbca96be83ff4de9460e2c6e3"
+  },
+  "q7": {
+    "status": "insufficient_data",
+    "value": null,
+    "display": "null - The database contains no cost, rate, or financial valuation columns to compute monetary loss in rupees.",
+    "metric": "q7_stop_cost_rupees",
+    "sql": "SELECT * FROM sqlite_master WHERE type='table' -- inspected all tables for cost/rate columns",
+    "logic": "check schema for machine cost rates or financial valuation tables -> none exist -> return null",
+    "params": {
+      "plant_day": "2026-11-03",
+      "tenant": "Kalpa Appliances"
+    },
+    "rows_used": 0,
+    "as_of": "2026-11-07 14:36:00",
+    "coverage": {
+      "expected": 0,
+      "observed": 0,
+      "missing_ranges": []
+    },
+    "caveats": [
+      "Amendment 6: Return null unless the schema contains a defensible cost rate or financial model. Never invent a rupee rate.",
+      "All tables in factory.db were inspected: companies, machines, machine_minutes, plan, stop_reasons, rejections, energy_meters, energy_hourly. None contain monetary or currency values."
+    ],
+    "sensitivity": [],
+    "needed_data": "Hourly downtime cost rate per machine, labor cost per downtime hour, or part value model.",
+    "details": [],
+    "result_hash": "96f75527848a91977d9500ab04553a68524d91b389a7da539b62381f9afec600"
+  },
+  "q8": {
+    "status": "ok",
+    "value": 44,
+    "display": "44 stop-reason entries created > 24h after described hour end (out of 733 total entries)",
+    "metric": "q8_late_stop_entries_over_24h",
+    "sql": "WITH live AS (  SELECT DISTINCT company_id, machine_id, reason_date, hour_start, reason, minutes,                   COALESCE(remark, '') AS remark, COALESCE(entered_by, '') AS entered_by, created_at  FROM stop_reasons   WHERE company_id = ? AND deleted_at = ? AND reason_date >= ? AND reason_date <= ?) SELECT COUNT(*) AS total_entries,        SUM(strftime('%s', created_at) - strftime('%s', datetime(reason_date || ' ' || hour_start, '+1 hour')) > 86400) AS late_entries FROM live",
+    "logic": "collapse exact live duplicate rows -> compute seconds elapsed from described hour end to created_at -> count entries strictly > 86400 seconds (24h)",
+    "params": {
+      "start_date": "2026-11-01",
+      "end_date": "2026-11-07",
+      "tenant": "Kalpa Appliances"
+    },
+    "rows_used": 733,
+    "as_of": "2026-11-07 14:36:00",
+    "coverage": {
+      "expected": 0,
+      "observed": 0,
+      "missing_ranges": []
+    },
+    "caveats": [
+      "Hour end is reason_date + hour_start + 1 hour. Lateness is strictly > 24 hours (86400 seconds).",
+      "Entries appearing twice are counted once via deduplication.",
+      "Live rows only (deleted_at = '0000-00-00 00:00:00')."
+    ],
+    "sensitivity": [
+      {
+        "name": "calendar_date_range",
+        "value": 44,
+        "total_entries": 733
+      },
+      {
+        "name": "plant_day_reading_alternative",
+        "value": 42,
+        "total_entries": 687
+      }
+    ],
+    "needed_data": "",
+    "details": [],
+    "result_hash": "d920f6df157acb0f81169c9f6476a92eb8acbb60e0036a1c1ea0a4f1931a875e"
+  },
+  "q9": {
+    "status": "ok",
+    "value": 124,
+    "display": "124 pieces rejected on 2026-11-02",
+    "metric": "q9_rejections_count",
+    "sql": "WITH live AS (  SELECT DISTINCT company_id, machine_id, reject_date, hour_start, qty, defect, created_at   FROM rejections   WHERE company_id = ? AND deleted_at = ? AND reject_date = ?) SELECT defect, SUM(qty) AS qty, COUNT(*) AS n_entries FROM live GROUP BY defect ORDER BY qty DESC",
+    "logic": "collapse exact live duplicate rejection rows for reject_date -> sum qty across all defect types",
+    "params": {
+      "date": "2026-11-02",
+      "tenant": "Kalpa Appliances"
+    },
+    "rows_used": 44,
+    "as_of": "2026-11-07 14:36:00",
+    "coverage": {
+      "expected": 0,
+      "observed": 0,
+      "missing_ranges": []
+    },
+    "caveats": [
+      "Live rows only (deleted_at = '0000-00-00 00:00:00'); exact duplicate rows collapsed to one.",
+      "Filtered on calendar reject_date = '2026-11-02' (profiling showed reject_date is a calendar date).",
+      "'No Rejection' records with qty = 0 are included in entries but contribute 0 to count."
+    ],
+    "sensitivity": [
+      {
+        "name": "defect_breakdown",
+        "value": {
+          "Dent": 30,
+          "Burr": 29,
+          "Crack": 26,
+          "Short shot": 23,
+          "Flash": 16,
+          "No Rejection": 0
+        }
+      },
+      {
+        "name": "plant_day_reading_alternative",
+        "value": 190,
+        "note": "plant day 2026-11-02 08:00 to next day 08:00"
+      }
+    ],
+    "needed_data": "",
+    "details": [],
+    "result_hash": "ab0ddcc83d24b63e1a2c4be0bb88726ecab6e488f4f4ad882fc2123ee0f13573"
+  },
+  "q10": {
+    "status": "ok",
+    "value": [
+      "Press 2",
+      "Bender 1",
+      "Moulder 2"
+    ],
+    "display": "3 machines running at snapshot time (Press 2, Bender 1, Moulder 2)",
+    "metric": "q10_machines_running_now",
+    "sql": "SELECT m.machine_id, m.name, mm.planned, mm.running, mm.pieces FROM machines m LEFT JOIN machine_minutes mm   ON m.company_id = mm.company_id AND m.machine_id = mm.machine_id AND mm.minute_start = ? WHERE m.company_id = ? ORDER BY m.machine_id",
+    "logic": "query tenant latest minute -> join machine_minutes at that minute for each machine -> return machines with running = 1",
+    "params": {
+      "snapshot_minute": "2026-11-07 14:36:00",
+      "tenant": "Kalpa Appliances"
+    },
+    "rows_used": 8,
+    "as_of": "2026-11-07 14:36:00",
+    "coverage": {
+      "expected": 0,
+      "observed": 0,
+      "missing_ranges": []
+    },
+    "caveats": [
+      "'Now' is defined by the latest available timestamp in the tenant's snapshot (2026-11-07 14:36:00), not the server wall-clock time.",
+      "A machine is considered running only if it has a live record at that exact minute with running = 1.",
+      "All tenant machines had a recorded state at the snapshot minute."
+    ],
+    "sensitivity": [
+      {
+        "name": "running_count",
+        "value": 3
+      },
+      {
+        "name": "stopped_count",
+        "value": 5
+      },
+      {
+        "name": "no_data_count",
+        "value": 0
+      }
+    ],
+    "needed_data": "",
+    "details": [
+      {
+        "machine_id": 101,
+        "name": "Press 1",
+        "planned": 1,
+        "running": 0,
+        "pieces": 0
+      },
+      {
+        "machine_id": 102,
+        "name": "Press 2",
+        "planned": 1,
+        "running": 1,
+        "pieces": 9
+      },
+      {
+        "machine_id": 103,
+        "name": "Press 3",
+        "planned": 0,
+        "running": 0,
+        "pieces": 0
+      },
+      {
+        "machine_id": 104,
+        "name": "Press 4",
+        "planned": 1,
+        "running": 0,
+        "pieces": 0
+      },
+      {
+        "machine_id": 111,
+        "name": "Bender 1",
+        "planned": 1,
+        "running": 1,
+        "pieces": 23
+      },
+      {
+        "machine_id": 112,
+        "name": "Bender 2",
+        "planned": 1,
+        "running": 0,
+        "pieces": 0
+      },
+      {
+        "machine_id": 121,
+        "name": "Moulder 1",
+        "planned": 0,
+        "running": 0,
+        "pieces": 0
+      },
+      {
+        "machine_id": 122,
+        "name": "Moulder 2",
+        "planned": 1,
+        "running": 1,
+        "pieces": 2
+      }
+    ],
+    "result_hash": "ede5bd2213b567f6397d6ad802360f15b3bfc35fef04ed65c5bd4529260eabc6"
+  }
+}
