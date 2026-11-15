@@ -11,7 +11,7 @@ Plant Copilot is a deterministic manufacturing metrics engine orchestrated by a 
             |
             v
     GeminiAgent Tool Loop (agent.py: gemini-2.5-flash, temperature=0, strict AgentDecision)
-            |  - Strict 12-tool allowlist (ALLOWED_TOOLS); ISO date & shift validation
+            |  - Strict allowlist (ALLOWED_TOOLS, 14 registered tool names); ISO date & shift validation
             |  - Multi-step loop receives only compact_digest() summaries, never raw DB rows
             v
     Watermark-Aware Cache (keyed by tenant, metric, normalized params, data_watermark)
@@ -21,14 +21,14 @@ Plant Copilot is a deterministic manufacturing metrics engine orchestrated by a 
             |-- Stoppage (gaps-and-islands, Data Issue D4 correction)
             |-- Energy (meter registers, gap bridging D2, boundary proof)
             |-- Production (per-minute piece aggregation, coverage tracking)
-            |-- Operations (rejections, late entries, machine downtime ranking, snapshot now)
+            |-- Operations (rejections, late entries, machine downtime ranking & one-shot explain_machine_downtime, snapshot now)
             +-- Plant South Adapter (SouthPlantAdapter with explicit SouthCapabilities)
             |
             v
     Evidence Envelope Sealer (SHA-256 result_hash per MetricResult)
             |
             v
-    Composer & GroundingValidator.validate_many (blocks hallucinated numbers)
+    Deterministic Composer & GroundingValidator.validate_many (empty baseline set(); blocks all ungrounded numbers)
             |
             v
     Output: Verified Answer + Evidence Envelope + Saved Checkpoint
@@ -39,7 +39,7 @@ Plant Copilot is a deterministic manufacturing metrics engine orchestrated by a 
 
 | Requirement | Implementation Mechanism | Verification Test |
 |---|---|---|
-| **Client Isolation** | `TenantDB` forces `company_id = ?` on every query and opens SQLite with `?mode=ro` and `PRAGMA query_only = ON`. Energy hourly joins `energy_meters` on `company_id`. `AgentDecision` has no `tenant` parameter; prompt injections cannot change tenant. | `tests/test_tenant.py`, `test_workflow_client_isolation_and_bad_tool_blocked` |
+| **Client Isolation** | `TenantDB` forces `company_id = ?` on every query and opens SQLite with `?mode=ro` and `PRAGMA query_only = ON`. Energy hourly joins `energy_meters` on `company_id`. `AgentDecision` has no `tenant` parameter; prompt injections cannot change tenant. | `tests/test_tenant.py`, `test_workflow_client_isolation_and_bad_tool_and_south_on_north_final` |
 | **Exact Numbers** | All calculations run deterministically in Python/SQL. Gemini only selects tools and parameters; it never runs SQL or math. | `test_production.py`, `test_stoppage.py`, `test_energy.py` |
 | **Evidence Envelope** | Every metric call returns `MetricResult` (status, value, display, metric, sql, logic, params, rows_used, as_of, coverage, caveats, sensitivity, needed_data, result_hash). | `envelope.py`, `test_envelope_has_all_required_keys` |
 | **Fresh Data ("Now")** | "Now" is the tenant's latest minute watermark (`2026-11-07 14:36:00` for Kalpa; `2026-11-07 07:55:00` for Plant South), never server wall-clock time. | `test_latest_minute_is_the_tenant_watermark`, `test_q10_running_machines_now` |
@@ -61,9 +61,10 @@ Execution follows a strict checkpointed lifecycle:
   1. Compact static tool catalog + machine list + snapshot timestamp only (zero raw DB rows sent to Gemini).
   2. Multi-step iterations pass only `compact_digest()` summaries (`result_hash[:12]`, `value`, `display`, top 3 details) instead of replaying full histories.
   3. `ThinkingConfig(thinking_budget=0)` on `gemini-2.5-flash` removes hidden reasoning-token overhead.
-  4. Single-tool answers compose deterministically from `MetricResult.display` at 0 extra LLM tokens.
+  4. 1-2 LLM call budget: `final_if_ok`, one-shot `explain_machine_downtime`, and `use_llm_composer=False` compose deterministically at 0 extra LLM tokens (1 call single-tool, 2 calls two-tool).
+  5. Clarification gate (`missing_fields_question`) halts as `CLARIFY` before DB queries when shift/date/machine is missing (`tests/test_clarify_gate.py`); South-only tools on North fail fast as `FAILED_FINAL`.
 
-Verified by `tests/test_workflow.py` (`test_workflow_multistep_tool_loop_and_compact_digests`, `test_workflow_midrun_failure_and_resume_skips_completed_steps`, `test_workflow_resume_expires_if_watermark_changes`).
+Verified by `tests/test_workflow.py` (`test_workflow_runs_and_checkpoints_in_single_call`, `test_workflow_multistep_two_call_budget`, `test_grounding_validator_tight_baseline_blocks_ungrounded_small_numbers`, `tests/test_clarify_gate.py`, `tests/test_explain_downtime.py`, `test_workflow_midrun_failure_and_resume_skips_completed_steps`, `test_workflow_resume_expires_if_watermark_changes`).
 
 ---
 
@@ -109,6 +110,6 @@ Plant South (`south_sample.db`) uses `SouthPlantAdapter` (`--plant south`) with 
 
 ## 7. Known limitations
 
-- **Model quota.** On a free key, `gemini-2.5-flash` allowed 20 requests per day in our run. Each question uses at least two model calls today. A quota error is saved as `FAILED_RETRYABLE`, and `--resume` continues without repeating completed tool calls.
+- **Model quota.** On a free key, `gemini-2.5-flash` allowed 20 requests per day in our run. Each question uses 1-2 model calls (1 for single-tool/one-shot questions via final_if_ok, 2 for two-step tool loops). A quota error is saved as `FAILED_RETRYABLE`, and `--resume` continues without repeating completed tool calls.
 - **What goes to the model.** The question text, machine names and compact result digests are sent to the Gemini API, and no raw database rows. Use a paid or non-training key for real plant data.
 - **Dates and parameters.** The model proposes tool names and parameters. Tool names, dates and shifts are validated for format, and machine names are matched inside the current tenant only. All numbers come from deterministic code.
