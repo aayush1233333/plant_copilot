@@ -22,6 +22,8 @@ ALLOWED_TOOLS = {
     "q9_rejections",
     "q10_running_now",
     "rank_machine_downtime",
+    "explain_machine_downtime",
+    "explain_downtime",
     "south_running_now",
     "south_unsupported",
 }
@@ -37,8 +39,9 @@ TOOL_CATALOG = """Tools (call only from this list):
 - q9_rejections(day): rejected pieces on calendar date YYYY-MM-DD.
 - q10_running_now(): machines running at tenant snapshot 'now'.
 - rank_machine_downtime(day): rank all tenant machines by Data-Issue-corrected planned downtime on plant day YYYY-MM-DD.
+- explain_machine_downtime(day): find which machine lost the most planned time on plant day YYYY-MM-DD AND its top real stop reasons (excludes Data Issue) in one call.
 - south_running_now(): Plant South running assets at snapshot (use ONLY when plant=south).
-- south_unsupported(metric_name, reason): use when plant=south does not support the requested capability (e.g. planned_time, shift_schedules, late_entries, financial_cost)."""
+- south_unsupported(metric_name, reason): use ONLY when plant=south does not support the requested capability."""
 
 
 class AgentDecision(BaseModel):
@@ -49,6 +52,7 @@ class AgentDecision(BaseModel):
     start_date: Optional[str] = None
     end_date: Optional[str] = None
     shift: Optional[str] = None
+    final_if_ok: bool = False
     reason: str = ""
 
 
@@ -60,6 +64,47 @@ def _is_iso_date(val: Optional[str]) -> bool:
         return True
     except ValueError:
         return False
+
+
+def missing_fields_question(
+    decision: AgentDecision,
+    machines: Optional[List[str]] = None,
+) -> Optional[str]:
+    """Return a clear user-facing clarification question when required fields are omitted."""
+    if decision.action != "CALL_TOOL" or decision.tool_name not in ALLOWED_TOOLS:
+        return None
+    name = decision.tool_name
+
+    if name in ("q1_long_stops", "q2_standstill_shift", "energy_shift") and not decision.machine:
+        if machines:
+            return f"Which machine? Available: {', '.join(machines)}."
+        return "Which machine?"
+
+    if name in (
+        "q1_long_stops",
+        "q2_standstill_shift",
+        "energy_shift",
+        "q5_total_pieces",
+        "q7_stop_cost_rupees",
+        "q9_rejections",
+        "rank_machine_downtime",
+        "explain_machine_downtime",
+        "explain_downtime",
+    ) and not decision.day:
+        return "Which date (YYYY-MM-DD)?"
+
+    if name in ("q2_standstill_shift", "energy_shift") and not decision.shift:
+        return "Which shift, A or B?"
+
+    if name in ("q6_top_stop_reason", "q8_late_stop_entries"):
+        if not decision.start_date and not decision.end_date:
+            return "Which start date and end date (YYYY-MM-DD)?"
+        if not decision.start_date:
+            return "Which start date (YYYY-MM-DD)?"
+        if not decision.end_date:
+            return "Which end date (YYYY-MM-DD)?"
+
+    return None
 
 
 def validate_decision(decision: AgentDecision) -> Optional[str]:
@@ -81,7 +126,14 @@ def validate_decision(decision: AgentDecision) -> Optional[str]:
         return "q1_long_stops requires 'machine' and 'day'."
     if name in ("q2_standstill_shift", "energy_shift") and (not decision.machine or not decision.day):
         return f"{name} requires 'machine' and 'day'."
-    if name in ("q5_total_pieces", "q7_stop_cost_rupees", "q9_rejections", "rank_machine_downtime") and not decision.day:
+    if name in (
+        "q5_total_pieces",
+        "q7_stop_cost_rupees",
+        "q9_rejections",
+        "rank_machine_downtime",
+        "explain_machine_downtime",
+        "explain_downtime",
+    ) and not decision.day:
         return f"{name} requires 'day'."
     if name in ("q6_top_stop_reason", "q8_late_stop_entries") and (not decision.start_date or not decision.end_date):
         return f"{name} requires 'start_date' and 'end_date'."
@@ -118,7 +170,7 @@ def _extract_tokens(response: Any) -> Dict[str, int]:
 
 
 class GeminiAgent:
-    """Token-optimized Gemini tool-calling planner & multi-tool answer composer."""
+    """Token-optimized Gemini tool-calling planner & optional multi-tool answer composer."""
 
     def __init__(self, api_key: Optional[str] = None, model: Optional[str] = None):
         self._api_key = api_key or os.environ.get("GEMINI_API_KEY") or os.environ.get("GOOGLE_API_KEY")
@@ -158,7 +210,10 @@ class GeminiAgent:
             "2. Never invent numbers or switch tenants. Only pick tools and parameters.\n"
             "3. Choose CALL_TOOL if another metric is needed, FINISH once tool digests answer the question, "
             "CANNOT_ANSWER if no tool or data supports the request, or CLARIFY if ambiguous.\n"
-            "4. Do not repeat an already completed tool call with the same parameters.\n\n"
+            "4. Never guess Shift A or B when calling q2_standstill_shift or energy_shift: if shift is omitted, return action='CLARIFY'.\n"
+            "5. Prefer explain_machine_downtime(day) for 'which machine lost the most time and why' questions.\n"
+            "6. Set final_if_ok=true on CALL_TOOL whenever that call completes all needed data so no extra FINISH call is needed.\n"
+            "7. Do not repeat an already completed tool call with the same parameters.\n\n"
             + TOOL_CATALOG
         )
         user_prompt = (

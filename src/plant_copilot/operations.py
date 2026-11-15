@@ -4,6 +4,7 @@ from typing import Optional
 from plant_copilot.envelope import Coverage, MetricResult
 from plant_copilot.stoppage import DATA_ISSUE, _load
 from plant_copilot.tenant import LIVE_TS, TenantDB
+from plant_copilot.timeutil import fmt_ts, plant_day_bounds
 
 
 def q6_top_stop_reason(
@@ -360,4 +361,77 @@ def rank_machine_downtime(db: TenantDB, day: date) -> MetricResult:
             "Missing minutes are tracked in unknown_minutes and never assumed stopped.",
         ],
         details=ranking,
+    ).seal()
+
+
+def explain_machine_downtime(db: TenantDB, day: date) -> MetricResult:
+    """Rank machines on a plant day, then explain the winner with ITS OWN stop reasons on the SAME plant-day window."""
+    metric = "explain_machine_downtime_plant_day"
+    ranked = rank_machine_downtime(db, day)
+    if ranked.status != "ok":
+        return MetricResult(
+            status=ranked.status, value=None, display=ranked.display, metric=metric,
+            params=ranked.params, as_of=ranked.as_of, needed_data=ranked.needed_data,
+        ).seal()
+
+    top = ranked.details[0]
+    name = top["machine"]
+    loaded = _load(db, name, day)
+    reasons: dict = {}
+    data_issue_entered = 0
+    for entry in loaded["entries"]:
+        if entry["reason"] == DATA_ISSUE:
+            data_issue_entered += entry["minutes"]
+        else:
+            reasons[entry["reason"]] = reasons.get(entry["reason"], 0) + entry["minutes"]
+    ordered = sorted(reasons.items(), key=lambda kv: (-kv[1], kv[0]))
+    entered_real = sum(reasons.values())
+    corrected = top["corrected_stopped_minutes"]
+    raw = top["raw_stopped_minutes"]
+
+    head = (
+        f"{name} lost the most planned time on plant day {day.isoformat()} "
+        f"({corrected} min corrected; raw: {raw} min)."
+    )
+    top_reasons = []
+    if ordered:
+        best = ordered[0][1]
+        top_reasons = [r for r, m in ordered if m == best]
+        if len(top_reasons) == 1:
+            why = f" Its top operator-entered reason was {top_reasons[0]} ({best} min)."
+        else:
+            why = f" Its top operator-entered reasons were tied: {' and '.join(top_reasons)} ({best} min each)."
+        why += f" Operators entered {entered_real} real reason minutes against {corrected} stopped minutes."
+    else:
+        why = " Operators entered no real stop reason for it that day."
+
+    caveats = [
+        "Plant day = 08:00 to 08:00 next morning, used for both the downtime ranking and the stop reasons.",
+        "Reasons are the winner's own live, de-duplicated operator entries; Data Issue entries are excluded (the machine was actually running).",
+        "Operator entries are per machine-hour and are not matched to individual stopped minutes, so entered minutes can differ from stopped minutes.",
+    ]
+    tied_machines = [x["machine"] for x in ranked.details[1:] if x["corrected_stopped_minutes"] == corrected]
+    if tied_machines:
+        caveats.append("Tied on corrected minutes with: " + ", ".join(tied_machines) + ". Ties are broken alphabetically.")
+    if top["ambiguous_di"]:
+        caveats.append("Data Issue entries for the winner exceed its stopped minutes in at least one hour; its corrected minutes are approximate.")
+
+    return MetricResult(
+        status="ok",
+        value={"machine": name, "top_reasons": top_reasons},
+        display=head + why,
+        metric=metric,
+        sql="Per-machine minute_start + stop_reasons across the plant_day window; winner's stop_reasons grouped by reason (Data Issue excluded)",
+        logic="rank machines by Data-Issue-corrected planned stopped minutes -> take the winner -> sum its own live, de-duplicated reasons on the same plant-day window",
+        params=ranked.params,
+        rows_used=ranked.rows_used,
+        as_of=ranked.as_of,
+        coverage=ranked.coverage,
+        caveats=caveats,
+        sensitivity=[
+            {"name": "winner_reasons_ranking", "value": [{"reason": r, "minutes": m} for r, m in ordered]},
+            {"name": "winner_real_reason_minutes_entered", "value": entered_real},
+            {"name": "winner_data_issue_minutes_entered", "value": data_issue_entered},
+        ],
+        details=ranked.details,
     ).seal()

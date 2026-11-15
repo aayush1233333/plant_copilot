@@ -38,3 +38,31 @@ This document captures data ambiguities, assumptions, and specific clarification
 2. **Blank Downtime Causes**: Why are 71 downtime entries blank?
 3. **Status Timestamp Placement**: Does `stamp` in `tbl_mc_status` mark the beginning or the end of the 5-minute interval?
 4. **Shift Definitions**: Are Plant South shifts identical to Plant North (08:00 / 20:00)?
+
+
+---
+
+## 3. More questions for the Plant North owner
+
+### N6: What does "did not run" mean in q1?
+- **Observation**: Press 2 has 7 stops of 30 minutes or more by the system flag. One of them (102 minutes on 4 Nov) has 96 minutes entered as Data Issue, meaning the machine was actually running.
+- **Question**: Should a stop be judged by the system flag (answer 7) or by what really happened (answer 6)?
+- **Decision taken**: 6, with 7 kept in the envelope sensitivity.
+
+### N7: q4: should a missing first slot make energy "incomplete"?
+- **Observation**: Press 3's first shift-A slot is missing, but the previous slot ends at exactly 07:30:00 with the register value, and all 3,343 consecutive slot pairs link with a 0.0 jump.
+- **Question**: Is a neighbouring reading enough proof of the boundary, or did you expect "incomplete"?
+- **Decision taken**: 140.7 kWh, with "incomplete" kept as the strict alternative.
+
+### N8: q2: a minute with no data
+- **Observation**: Press 2 has no row at 10:47 on 3 Nov, between two stopped stretches. Our rule treats a missing minute as unknown, so the answer is 299 with a range of 299 to 300.
+- **Question**: Should a missing minute inside a stop be counted as stopped?
+
+### N9: What do "yesterday" and "this week" mean?
+- **Question**: Is "yesterday" the previous plant day (08:00 to 08:00) or the previous calendar day, and which days make up "this week"?
+- **Decision taken**: Yesterday means the previous plant day. An unclear range should be asked back, not guessed.
+
+### N10: "Right now" and the last minute of data
+- **Observation**: Press 1 ran through 14:35 and stopped at 14:36, the last minute in the snapshot. Energy data ends at 14:30 and rejections at 14:28, so "now" differs by source.
+- **Question**: Should "running right now" use the exact last minute, or the last full minute?
+- **Decision taken**: The exact latest minute, so Press 1 is not listed.

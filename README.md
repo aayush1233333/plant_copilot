@@ -8,11 +8,11 @@ Deterministic, multi-tenant manufacturing-analytics AI copilot for Plant North (
     .\.venv\Scripts\Activate.ps1
     pip install -r requirements.txt
     $env:PYTHONPATH = "src"
-    $env:GEMINI_API_KEY = "YOUR_API_KEY"
+    $env:GEMINI_API_KEY = "YOUR_API_KEY" 
     # Optional higher free-tier RPM:
     # $env:GEMINI_MODEL = "gemini-3.1-flash-lite-preview"
 
-## Run All Tests (72 tests)
+## Run All Tests (87 tests)
 
     python -m pytest -v
 

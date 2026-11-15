@@ -7,10 +7,17 @@ from typing import Any, Dict, List, Literal, Optional
 
 from pydantic import BaseModel, Field
 
-from plant_copilot.agent import AgentDecision, GeminiAgent, compact_digest, validate_decision
+from plant_copilot.agent import (
+    AgentDecision,
+    GeminiAgent,
+    compact_digest,
+    missing_fields_question,
+    validate_decision,
+)
 from plant_copilot.energy import energy_shift
 from plant_copilot.envelope import MetricResult
 from plant_copilot.operations import (
+    explain_machine_downtime,
     q6_top_stop_reason,
     q7_stop_cost_rupees,
     q8_late_stop_entries,
@@ -28,6 +35,8 @@ WorkflowStatus = Literal[
     "RECEIVED", "PLANNED", "EXECUTED", "COMPOSED", "DONE",
     "CLARIFY", "CANNOT_ANSWER", "FAILED_RETRYABLE", "FAILED_FINAL", "EXPIRED"
 ]
+
+SOUTH_ONLY_TOOLS = {"south_running_now", "south_unsupported"}
 
 
 class MetricCall(BaseModel):
@@ -65,7 +74,7 @@ class Checkpoint(BaseModel):
 class GroundingValidator:
     @staticmethod
     def _allowed_from_envelope(envelope: MetricResult) -> set[str]:
-        allowed = {"0", "1", "2", "3", "4", "5", "6", "7", "8", "9", "10", "24", "30", "60", "2025", "2026"}
+        allowed: set[str] = set()
 
         def _collect_nums(obj: Any) -> None:
             if isinstance(obj, bool):
@@ -114,12 +123,14 @@ class WorkflowEngine:
         south_db_path: str = "data/south_sample.db",
         checkpoint_dir: str = ".checkpoints",
         agent: Optional[Any] = None,
+        use_llm_composer: bool = False,
     ):
         self.db_path = db_path
         self.south_db_path = south_db_path
         self.checkpoint_dir = Path(checkpoint_dir)
         self.checkpoint_dir.mkdir(parents=True, exist_ok=True)
         self.agent = agent if agent is not None else GeminiAgent()
+        self.use_llm_composer = use_llm_composer
         self._cache: Dict[str, MetricResult] = {}
 
     def _save_checkpoint(self, cp: Checkpoint) -> None:
@@ -166,7 +177,7 @@ class WorkflowEngine:
         db: Optional[TenantDB] = None,
         south: Optional[SouthPlantAdapter] = None,
     ) -> MetricResult:
-        tenant_key = f"south" if plant == "south" else str(db._ctx.company_id)
+        tenant_key = "south" if plant == "south" else str(db._ctx.company_id)
         cache_key = f"{tenant_key}:{call.metric}:{json.dumps(call.params, sort_keys=True)}:{watermark}"
         if cache_key in self._cache:
             return self._cache[cache_key]
@@ -186,9 +197,9 @@ class WorkflowEngine:
             if name == "q1_long_stops":
                 res = q1_long_stops(db, p["machine"], date.fromisoformat(p["day"]))
             elif name == "q2_standstill_shift":
-                res = q2_standstill_shift(db, p["machine"], date.fromisoformat(p["day"]), p.get("shift", "A"))
+                res = q2_standstill_shift(db, p["machine"], date.fromisoformat(p["day"]), p["shift"])
             elif name == "energy_shift":
-                res = energy_shift(db, p["machine"], date.fromisoformat(p["day"]), p.get("shift", "A"))
+                res = energy_shift(db, p["machine"], date.fromisoformat(p["day"]), p["shift"])
             elif name == "q5_total_pieces":
                 res = q5_total_pieces(db, date.fromisoformat(p["day"]))
             elif name == "q6_top_stop_reason":
@@ -203,6 +214,8 @@ class WorkflowEngine:
                 res = q10_running_now(db)
             elif name == "rank_machine_downtime":
                 res = rank_machine_downtime(db, date.fromisoformat(p["day"]))
+            elif name in ("explain_machine_downtime", "explain_downtime"):
+                res = explain_machine_downtime(db, date.fromisoformat(p["day"]))
             else:
                 raise ValueError(f"Unknown metric {name}")
 
@@ -219,6 +232,17 @@ class WorkflowEngine:
         watermark = db.latest_minute() or ""
         machines = [m["name"] for m in db.machines()]
         return db, None, watermark, machines
+
+    @staticmethod
+    def _compose_deterministic(envelopes: List[MetricResult], watermark: str) -> str:
+        if len(envelopes) == 1:
+            env = envelopes[0]
+            if env.status == "insufficient_data":
+                prefix = "" if env.display.lower().startswith("null") else "null - "
+                return f"{prefix}{env.display} (Needed: {env.needed_data}) [as_of: {env.as_of}]"
+            return f"{env.display} [as_of: {env.as_of}]"
+        parts = [e.display.rstrip(".") + "." for e in envelopes]
+        return " ".join(parts) + f" [as_of: {watermark}]"
 
     def run(
         self,
@@ -328,11 +352,27 @@ class WorkflowEngine:
                             return {"status": "cannot_answer", "answer": cp.final_answer, "checkpoint": cp}
                         break
 
+                    clarify_msg = missing_fields_question(decision, machines)
+                    if clarify_msg:
+                        cp.status = "CLARIFY"
+                        cp.current_step = "CLARIFY"
+                        cp.final_answer = clarify_msg
+                        self._save_checkpoint(cp)
+                        return {"status": "clarify", "answer": cp.final_answer, "checkpoint": cp}
+
                     err = validate_decision(decision)
                     if err:
                         cp.status = "FAILED_FINAL"
                         cp.current_step = "FAILED_FINAL"
                         cp.errors.append(f"Plan validation failed: {err}")
+                        self._save_checkpoint(cp)
+                        return {"status": "error", "error": err, "checkpoint": cp}
+
+                    if cp.plant == "north" and decision.tool_name in SOUTH_ONLY_TOOLS:
+                        err = f"South-only tool {decision.tool_name!r} cannot be executed on North plant."
+                        cp.status = "FAILED_FINAL"
+                        cp.current_step = "FAILED_FINAL"
+                        cp.errors.append(err)
                         self._save_checkpoint(cp)
                         return {"status": "error", "error": err, "checkpoint": cp}
 
@@ -360,6 +400,9 @@ class WorkflowEngine:
                     cp.status = "PLANNED"
                     self._save_checkpoint(cp)
 
+                    if decision.final_if_ok and envelope.status in ("ok", "insufficient_data"):
+                        break
+
                 cp.current_step = "EXECUTED"
                 if "EXECUTED" not in cp.completed_steps:
                     cp.completed_steps.append("EXECUTED")
@@ -368,20 +411,15 @@ class WorkflowEngine:
 
             envelopes = [MetricResult.model_validate(e) for e in cp.tool_envelopes]
             if "COMPOSED" not in cp.completed_steps:
-                if len(envelopes) == 1:
-                    env = envelopes[0]
-                    if env.status == "insufficient_data":
-                        prefix = "" if env.display.lower().startswith("null") else "null - "
-                        answer_text = f"{prefix}{env.display} (Needed: {env.needed_data}) [as_of: {env.as_of}]"
-                    else:
-                        answer_text = f"{env.display} [as_of: {env.as_of}]"
+                if len(envelopes) == 1 or not self.use_llm_composer:
+                    answer_text = self._compose_deterministic(envelopes, watermark)
                 else:
                     answer_text, tokens = self.agent.compose_multi_tool_answer(
                         cp.normalized_question, cp.tool_digests
                     )
                     self._add_tokens(cp, tokens)
                     if not GroundingValidator.validate_many(answer_text, envelopes):
-                        answer_text = " | ".join(f"{e.display}" for e in envelopes) + f" [as_of: {watermark}]"
+                        answer_text = self._compose_deterministic(envelopes, watermark)
 
                 if not GroundingValidator.validate_many(answer_text, envelopes):
                     cp.status = "FAILED_FINAL"
